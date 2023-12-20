@@ -1,0 +1,6 @@
+sqlalchemy
+alembic
+nltk
+langdetect
+pymorphy3
+pymorphy3-dicts-ru
