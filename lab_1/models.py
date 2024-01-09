@@ -1,4 +1,4 @@
-from sqlalchemy import Text
+from sqlalchemy import Text, String
 from .database import Base
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,8 +11,27 @@ class Synonym(Base):
 
 
 class Request(Base):
-    __tablename__ = 'request'
+    __tablename__ = 'questions_and_answers'
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    request: Mapped[str] = mapped_column(Text, nullable=False)
+    request: Mapped[str] = mapped_column('question', Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
 
+
+class Word(Base):
+    __tablename__ = 'words'
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    word: Mapped[str] = mapped_column(String(100))
+    connected_word: Mapped[str] = mapped_column(String(100))
+
+
+class ServiceWord(Base):
+    __tablename__ = 'service_words'
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    word: Mapped[str] = mapped_column(Text)
+
+
+class Senses(Base):
+    __tablename__ = 'senses'
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text)
+    lemma: Mapped[str] = mapped_column(Text)

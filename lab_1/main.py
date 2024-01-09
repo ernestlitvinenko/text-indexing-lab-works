@@ -1,11 +1,14 @@
 import difflib
+import pathlib
 
 import nltk
 import pymorphy3
 from nltk.corpus import stopwords
-from lab_1.models import Request, Synonym
+from lab_1.models import Request, Synonym, ServiceWord, Senses
 from lab_1.database import session_maker
-from sqlalchemy import insert, select, Result
+from sqlalchemy import insert, select, Result, func
+
+from xml.etree import ElementTree as ET
 
 # DOWNLOAD NLTK DATA
 nltk.download('popular')
@@ -13,7 +16,34 @@ nltk.download('popular')
 
 class LangProcessing:
     def __init__(self):
+        self.__stopwords: list[str] | None = None
         self.analyzer = pymorphy3.MorphAnalyzer()
+
+    @property
+    def stopwords(self) -> list[str]:
+        if self.__stopwords is None:
+            with session_maker() as session:
+                stmt = select(ServiceWord)
+                result: Result = session.execute(stmt)
+                data: list[ServiceWord] = result.scalars().all()
+            self.__stopwords = stopwords.words("russian") + [x.word for x in data]
+        return self.__stopwords
+
+    def add_stopwords(self, filepath: pathlib.Path):
+        root = ET.parse(filepath).getroot()
+        stmt = insert(ServiceWord)
+        with session_maker() as session:
+            session.execute(stmt, [{"word": child.text.lower()} for child in root])
+            session.commit()
+
+    def add_senses(self, filepath: pathlib.Path):
+        root = ET.parse(filepath).getroot()
+        stmt = insert(Senses)
+        with session_maker() as session:
+            session.execute(stmt,
+                            [{"name": child.attrib["name"].lower(), "lemma": child.attrib["lemma"].lower()} for child in
+                             root])
+            session.commit()
 
     def punkt(self, data: list[str]):
         """
@@ -63,8 +93,9 @@ class LangProcessing:
             question (str): The question to set the answer for.
             answer (str): The answer to set for the question.
         """
-        question = ' '.join(
-            [self.normalize_word(x) for x in self.tokenize_words(question) if x not in stopwords.words("russian")])
+        tokenized_words = [word for word in self.tokenize_words(question) if word not in self.stopwords]
+        pairs = [' '.join([word_1, word_2]) for word_1, word_2 in zip(tokenized_words, tokenized_words[1:])]
+        question = ' '.join([self.normalize_word(x) for x in pairs])
 
         with session_maker() as session:
             stmt = insert(Request).values(request=question, answer=answer)
@@ -106,7 +137,16 @@ class LangProcessing:
         if not isinstance(word, str):
             print(word)
             raise TypeError("Word must be a string")
-        return self.analyzer.parse(word)[0].normal_form
+        with session_maker() as session:
+            stmt = select(Senses).where(Senses.name.like('%' + word + '%'))
+            result: Result = session.execute(stmt)
+            data: list[Senses] = result.scalars().all()
+        if len(data) > 0:
+            return data[0].lemma
+
+        data: list[str] = [self.analyzer.parse(x)[0].normal_form for x in word.split(' ')]
+
+        return ' '.join(data)
 
     def get_answer(self, question: str):
         """
@@ -121,28 +161,29 @@ class LangProcessing:
         Raises:
             None
         """
-        question = [self.normalize_word(x) for x in self.tokenize_words(question) if
-                    x not in stopwords.words("russian")]
-        question = self.replace_with_synonyms(question)
-        question = [x for x in question if x != ""]
+        tokenized_words = [word for word in self.tokenize_words(question) if word not in self.stopwords]
+        pairs = [' '.join([word_1, word_2]) for word_1, word_2 in zip(tokenized_words, tokenized_words[1:])]
 
-        print(question)
+        question = [self.normalize_word(x) for x in pairs]
+
+        question = [x for x in question if x != ""]
 
         with session_maker() as session:
             stmt = select(Request)
             result: Result = session.execute(stmt)
-            data = result.scalars().all()
+            data: list[Request] = result.scalars().all()
 
-        returned = sorted([x for x in map(lambda x: [x.answer, difflib.SequenceMatcher(None, question,
-                                                                                       x.request.split(' ')).ratio()],
-                                          data) if x[1] > 0.75], key=lambda x: x[1], reverse=True)
-        return returned
+        ratio_dict = {}
+        for qua in data:
+            ratio_dict[qua] = max(difflib.SequenceMatcher(None, q, qua.request).ratio() for q in question)
+
+        return list(sorted([[key.answer, val] for key, val in ratio_dict.items()], key=lambda x: x[1], reverse=True))
 
     def add_synonym(self, core_word: str, synonym: str):
         core_word = [self.normalize_word(x) for x in self.tokenize_words(core_word) if
-                     x not in stopwords.words("russian")]
+                     x not in self.stopwords]
 
-        synonym = [self.normalize_word(x) for x in self.tokenize_words(synonym) if x not in stopwords.words("russian")]
+        synonym = [self.normalize_word(x) for x in self.tokenize_words(synonym) if x not in self.stopwords]
 
         if len(core_word) == 0:
             core_word = ""
@@ -163,5 +204,5 @@ if __name__ == '__main__':
     from pprint import pprint as pp
 
     proc = LangProcessing()
-    proc.add_synonym("чтоже", "что")
-    pp(proc.get_answer("чтоже такое nltk"))
+    # proc.set_answer("Как помыть машину?", "Взять шланг и помыть")
+    print(proc.get_answer("Как правильно помыть машину и не испачкать руки?"))
